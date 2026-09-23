@@ -1,5 +1,7 @@
 # [Proposal / PoC] Hike WebAssembly & Runtime Safe Obfuscation Pipeline
 
+[日本語版 (Japanese README)](./README.ja.md)
+
 > **Note**: This repository is a temporary, standalone Proof-of-Concept (PoC) proposal for the Hike Language development team. (Unmaintained / Archive-ready).
 
 ---
