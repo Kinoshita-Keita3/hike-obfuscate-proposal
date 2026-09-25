@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * [Proposal / PoC] Hike WebAssembly & Runtime Safe Obfuscation Pipeline
+ * Hike WebAssembly & Runtime Safe Obfuscation Pipeline (Community Fork)
  * ---------------------------------------------------------------------
- * 機能概要:
- *  1. hikec による WASM コンパイル (オプション)
- *  2. wasm-strip によるデバッグ情報・不要セクションの除去
- *  3. Babel AST 静的解析による runtime.js 内の Wasm インターフェース名・公開API名の自動抽出
- *  4. javascript-obfuscator による安全な高強度難読化 (runtime.min.js 出力)
+ * Support for Hike compiler's `--export-symbols` feature.
+ *
+ * Feature Highlights:
+ *  1. Hike Wasm compilation with `--export-symbols` (or `-export-symbols`) flag.
+ *  2. Direct ingestion of Hike export/import symbol definitions into obfuscation reservation set.
+ *  3. Hybrid protection combining `--export-symbols` metadata and Babel AST static analysis of runtime JS.
+ *  4. High-strength obfuscation via javascript-obfuscator maintaining Wasm boundary safety.
  */
 
 const fs = require('fs');
@@ -16,17 +18,45 @@ const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 const JavaScriptObfuscator = require('javascript-obfuscator');
 
-// --- 設定・パス ---
+// --- Command Line Argument Parser ---
+function parseArgs() {
+    const args = process.argv.slice(2);
+    const options = {};
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--export-symbols' || args[i] === '--symbols') {
+            options.exportSymbols = args[i + 1] || 'symbols.json';
+            i++;
+        } else if (args[i] === '--src') {
+            options.hikeSource = args[i + 1];
+            i++;
+        } else if (args[i] === '--out') {
+            options.wasmOutput = args[i + 1];
+            i++;
+        } else if (args[i] === '--runtime') {
+            options.runtimeJs = args[i + 1];
+            i++;
+        } else if (args[i] === '--runtime-out') {
+            options.runtimeMinJs = args[i + 1];
+            i++;
+        }
+    }
+    return options;
+}
+
+const cliArgs = parseArgs();
+
+// --- Configuration ---
 const CONFIG = {
-    hikeSource: process.env.HIKE_SRC || path.resolve(__dirname, './main.hike'),
-    wasmOutput: process.env.WASM_OUT || path.resolve(__dirname, './main.wasm'),
-    runtimeJs: process.env.RUNTIME_JS || path.resolve(__dirname, './runtime.js'),
-    runtimeMinJs: process.env.RUNTIME_MIN_JS || path.resolve(__dirname, './runtime.min.js'),
+    hikeSource: cliArgs.hikeSource || process.env.HIKE_SRC || path.resolve(__dirname, './main.hike'),
+    wasmOutput: cliArgs.wasmOutput || process.env.WASM_OUT || path.resolve(__dirname, './main.wasm'),
+    runtimeJs: cliArgs.runtimeJs || process.env.RUNTIME_JS || path.resolve(__dirname, './runtime.js'),
+    runtimeMinJs: cliArgs.runtimeMinJs || process.env.RUNTIME_MIN_JS || path.resolve(__dirname, './runtime.min.js'),
+    exportSymbolsFile: cliArgs.exportSymbols || process.env.HIKE_EXPORT_SYMBOLS || path.resolve(__dirname, './sample_symbols.json'),
     
-    compileCommand: 'hikec build -target wasm32 "{src}" -o "{out}"',
+    compileCommand: 'hikec build -target wasm32 "{src}" -o "{out}" --export-symbols "{symbols}"',
     wasmStripCommand: 'wasm-strip "{wasm}"',
     
-    // Wasm / Hike 標準システムキーワード
+    // Wasm / Hike Standard System Keywords
     baseReservedNames: [
         'WebAssembly',
         'Memory',
@@ -55,9 +85,11 @@ const CONFIG = {
         '__indirect_function_table',
         'table',
 
-        // Hike ランタイム共通インターフェース
+        // Hike Runtime Common Interfaces
         'HikeRuntime',
         'HikeConcurrentRuntime',
+        'HikeCode',
+        'instances',
         'wasmUrl',
         'scriptUrl',
         'heapSizeKB',
@@ -79,7 +111,8 @@ const CONFIG = {
         'data',
         '__hikeActiveRuntime',
         'setHikeHeapSizeKB',
-        'getHikeHeapSizeKB'
+        'getHikeHeapSizeKB',
+        'qrcode'
     ]
 };
 
@@ -91,11 +124,11 @@ const log = {
 };
 
 function runCommand(command, desc) {
-    log.info(`${desc} を実行中: ${command}`);
+    log.info(`${desc} Running command: ${command}`);
     try {
         execSync(command, { stdio: 'inherit' });
     } catch (err) {
-        log.error(`${desc} が失敗しました。`);
+        log.error(`${desc} failed.`);
         throw err;
     }
 }
@@ -111,27 +144,28 @@ function isCommandAvailable(commandName) {
 }
 
 function stepCompileHike() {
-    log.info('=== ステップ 1: Hike Wasm コンパイル ===');
+    log.info('=== Step 1: Hike Wasm Compilation with --export-symbols ===');
     if (!fs.existsSync(CONFIG.hikeSource)) {
-        log.warn(`Hike ソースファイル (${path.basename(CONFIG.hikeSource)}) が見つからないため、既存の WASM を使用します。`);
+        log.warn(`Hike source (${path.basename(CONFIG.hikeSource)}) not found. Skipping compiler invocation, using existing artifacts.`);
         return;
     }
 
     if (!isCommandAvailable('hikec')) {
-        log.warn('hikec コマンドが見つかりません。コンパイルをスキップします。');
+        log.warn('hikec binary not found in PATH. Skipping compilation.');
         return;
     }
 
     const cmd = CONFIG.compileCommand
         .replace('{src}', CONFIG.hikeSource)
-        .replace('{out}', CONFIG.wasmOutput);
-    runCommand(cmd, 'Hike Wasm コンパイル');
+        .replace('{out}', CONFIG.wasmOutput)
+        .replace('{symbols}', CONFIG.exportSymbolsFile);
+    runCommand(cmd, 'Hike Wasm Compile with --export-symbols');
 }
 
 function stepStripWasm() {
-    log.info('=== ステップ 2: Wasm デバッグ情報の削除 (wasm-strip) ===');
+    log.info('=== Step 2: Wasm Debug Section Stripping (wasm-strip) ===');
     if (!fs.existsSync(CONFIG.wasmOutput)) {
-        log.warn(`WASM ファイル (${path.basename(CONFIG.wasmOutput)}) が存在しないため、スキップします。`);
+        log.warn(`Wasm file (${path.basename(CONFIG.wasmOutput)}) not found. Skipping wasm-strip.`);
         return;
     }
 
@@ -139,13 +173,54 @@ function stepStripWasm() {
         const cmd = CONFIG.wasmStripCommand.replace('{wasm}', CONFIG.wasmOutput);
         runCommand(cmd, 'wasm-strip');
     } else {
-        log.warn('wasm-strip が見つかりません。デバッグ情報削除をスキップします。');
+        log.warn('wasm-strip command not found. Skipping debug section stripping.');
     }
 }
 
-function stepExtractInterfaceNames(jsCode) {
-    log.info('=== ステップ 3: AST 静的解析によるインターフェース名自動抽出 ===');
-    const reservedSet = new Set(CONFIG.baseReservedNames);
+/**
+ * Loads symbols exported by Hike compiler via `--export-symbols`
+ */
+function stepLoadExportSymbols(symbolsPath) {
+    log.info(`=== Step 3: Loading Symbols from --export-symbols File ===`);
+    const symbols = new Set();
+    
+    if (!fs.existsSync(symbolsPath)) {
+        log.warn(`Export symbols file not found at: ${symbolsPath}. Skipping file-based symbol reservation.`);
+        return Array.from(symbols);
+    }
+
+    try {
+        const content = fs.readFileSync(symbolsPath, 'utf8').trim();
+        if (content.startsWith('{') || content.startsWith('[')) {
+            const parsed = JSON.parse(content);
+            if (Array.isArray(parsed)) {
+                parsed.forEach(s => typeof s === 'string' && symbols.add(s));
+            } else if (typeof parsed === 'object' && parsed !== null) {
+                if (Array.isArray(parsed.exports)) parsed.exports.forEach(s => symbols.add(s));
+                if (Array.isArray(parsed.imports)) parsed.imports.forEach(s => symbols.add(s));
+                if (Array.isArray(parsed.symbols)) parsed.symbols.forEach(s => symbols.add(s));
+            }
+        } else {
+            // Plain text (one symbol per line)
+            content.split(/\r?\n/).forEach(line => {
+                const sym = line.trim();
+                if (sym && !sym.startsWith('#')) symbols.add(sym);
+            });
+        }
+        log.success(`Loaded ${symbols.size} exported symbols from: ${path.basename(symbolsPath)}`);
+    } catch (err) {
+        log.error(`Failed to parse symbols file (${symbolsPath}): ${err.message}`);
+    }
+
+    return Array.from(symbols);
+}
+
+/**
+ * Extracts interface names via AST static analysis and merges with --export-symbols metadata
+ */
+function stepExtractInterfaceNames(jsCode, extraExportSymbols = []) {
+    log.info('=== Step 4: AST Static Analysis & Symbol Merging ===');
+    const reservedSet = new Set([...CONFIG.baseReservedNames, ...extraExportSymbols]);
 
     let ast;
     try {
@@ -154,7 +229,7 @@ function stepExtractInterfaceNames(jsCode) {
             plugins: ['classProperties', 'dynamicImport']
         });
     } catch (err) {
-        log.error('Babel による AST パースに失敗しました。');
+        log.error('Babel AST parse error.');
         throw err;
     }
 
@@ -171,6 +246,9 @@ function stepExtractInterfaceNames(jsCode) {
                 if (object.type === 'Identifier' && object.name === 'env') {
                     reservedSet.add(property.name);
                 }
+                if (object.type === 'Identifier' && object.name === 'instances') {
+                    reservedSet.add(property.name);
+                }
             }
         },
         ObjectProperty(nodePath) {
@@ -185,7 +263,7 @@ function stepExtractInterfaceNames(jsCode) {
         AssignmentExpression(nodePath) {
             const { left } = nodePath.node;
             if (left.type === 'MemberExpression' && !left.computed) {
-                const objName = left.object.name;
+                const objName = left.object ? left.object.name : null;
                 if (objName === 'window' || objName === 'globalThis' || objName === 'global') {
                     if (left.property && left.property.name) {
                         reservedSet.add(left.property.name);
@@ -201,12 +279,12 @@ function stepExtractInterfaceNames(jsCode) {
     });
 
     const reservedList = Array.from(reservedSet);
-    log.info(`抽出・保持された予約語数: ${reservedList.length} 件`);
+    log.info(`Total reserved interface names count: ${reservedList.length}`);
     return reservedList;
 }
 
 function stepObfuscate(jsCode, reservedNames) {
-    log.info('=== ステップ 4: javascript-obfuscator による高強度難読化 ===');
+    log.info('=== Step 5: High-Strength JS Obfuscation ===');
 
     const obfuscationOptions = {
         compact: true,
@@ -236,32 +314,34 @@ function stepObfuscate(jsCode, reservedNames) {
 
 async function main() {
     console.log('----------------------------------------------------');
-    console.log(' Hike WebAssembly & Runtime Safe Obfuscation Build');
+    console.log(' Hike WebAssembly Safe Obfuscation (--export-symbols)');
     console.log('----------------------------------------------------');
 
     try {
         stepCompileHike();
         stepStripWasm();
 
+        const exportSymbols = stepLoadExportSymbols(CONFIG.exportSymbolsFile);
+
         if (!fs.existsSync(CONFIG.runtimeJs)) {
-            throw new Error(`対象の runtime.js が見つかりません: ${path.basename(CONFIG.runtimeJs)}`);
+            throw new Error(`Target runtime.js not found at: ${CONFIG.runtimeJs}`);
         }
-        log.info(`runtime.js を読み込み中: ${path.basename(CONFIG.runtimeJs)}`);
+        log.info(`Reading target runtime.js: ${path.basename(CONFIG.runtimeJs)}`);
         const originalCode = fs.readFileSync(CONFIG.runtimeJs, 'utf8');
 
-        const reservedNames = stepExtractInterfaceNames(originalCode);
+        const reservedNames = stepExtractInterfaceNames(originalCode, exportSymbols);
         const obfuscatedCode = stepObfuscate(originalCode, reservedNames);
 
-        log.info(`難読化コードを出力中: ${path.basename(CONFIG.runtimeMinJs)}`);
+        log.info(`Writing obfuscated code to: ${path.basename(CONFIG.runtimeMinJs)}`);
         fs.writeFileSync(CONFIG.runtimeMinJs, obfuscatedCode, 'utf8');
 
         const origSize = Buffer.byteLength(originalCode, 'utf8');
         const minSize = Buffer.byteLength(obfuscatedCode, 'utf8');
-        log.success(`難読化完了! 元サイズ: ${(origSize / 1024).toFixed(2)} KB -> 難読化後: ${(minSize / 1024).toFixed(2)} KB`);
-        log.success(`出力先: ${path.basename(CONFIG.runtimeMinJs)}`);
+        log.success(`Obfuscation successful! Original: ${(origSize / 1024).toFixed(2)} KB -> Obfuscated: ${(minSize / 1024).toFixed(2)} KB`);
+        log.success(`Output: ${path.basename(CONFIG.runtimeMinJs)}`);
         console.log('----------------------------------------------------');
     } catch (error) {
-        log.error(`ビルド処理中にエラーが発生しました: ${error.message}`);
+        log.error(`Build failed: ${error.message}`);
         process.exit(1);
     }
 }
@@ -271,7 +351,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    stepLoadExportSymbols,
     stepExtractInterfaceNames,
     stepObfuscate
 };
-

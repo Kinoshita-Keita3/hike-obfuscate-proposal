@@ -1,0 +1,18 @@
+{
+  "exports": [
+    "main",
+    "malloc",
+    "free",
+    "calloc",
+    "gen_qr_lite",
+    "hike_get_version",
+    "hike_matrix_create"
+  ],
+  "imports": [
+    "hike_thread_spawn",
+    "hike_event_create",
+    "hike_event_signal",
+    "hike_event_wait",
+    "hike_event_destroy"
+  ]
+}

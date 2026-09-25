@@ -1,69 +1,118 @@
-# 【提案 / PoC】Hike WebAssembly ＆ ランタイム安全難読化パイプライン
+# Hike WebAssembly ＆ ランタイム安全難読化ツール (`--export-symbols` 対応コミュニティフォーク版)
 
-> **注記**: 本リポジトリは、Hike言語開発チームに向けた一時的な概念実証（PoC）および機能提案用スタンドアロンリポジトリです。（確認後はアーカイブ/削除を想定しています）
+[Hike プログラミング言語 (hike-lang)](https://github.com/hike-lang/hike-lang) でコンパイルされた WebAssembly（`*.wasm`）および自動生成される JavaScript ランタイム・グルーコード（`runtime.js`）を、Wasm / JS 境界インターフェースを破壊することなく安全に高強度難読化するためのビルドパイプラインです。
 
----
-
-## 🎯 目的と背景
-
-Hike言語でコンパイルされた WebAssembly（`*.wasm`）と、自動生成される JavaScript グルーコード（`runtime.js`）を商用環境などで安全に配布する際、通常の JS 難読化ツールをそのまま適用すると `instance.exports.xxx` や `imports.env.malloc` などの Wasm 境界の識別子まで書き換わってしまい、実行時エラー（クラッシュ）が発生します。
-
-本リポジトリは、**Babel による AST 静的解析**と **`javascript-obfuscator`** を組み合わせ、Wasm インターフェースを自動抽出・保護した上で安全に難読化を行うリファレンス実装（PoC）と検証結果を提供します。
+Hike コンパイラに追加された `--export-symbols` オプションに対応しています。
 
 ---
 
-## 📁 フォルダ・ファイル構成
+## ⚠️ メンテナンスおよび自由なフォークについて
 
-```text
-├── package.json          # 依存パッケージ定義 (@babel/parser, @babel/traverse, javascript-obfuscator)
-├── .gitignore            # node_modules / ログ除外設定
-├── build-obfuscate.js    # AST 自動抽出＆難読化ビルドスクリプト本体
-├── runtime.js            # Hike 標準 WebAssembly ランタイム
-├── sample_qr.wasm        # 動作検証用 サンプル Wasm モジュール
-├── sample_wrapper.js     # sample_qr.wasm 用の JS グルーコード
-├── test_comparison.js    # オリジナル vs 難読化後の自動比較ベンチマークテスト
-├── README.md             # 英語ドキュメント (English)
-└── README.ja.md          # 本ドキュメント (日本語)
-```
+- **保守・維持について**: 本リポジトリは有志による参考実装として公開されています。**作者自身は難読化やコンパイラ等の専門的な知見が乏しく、今後の継続的な保守・サポート・機能改善・バグ修正等のメンテナンスを行う予定はありません。**
+- **自由なフォーク推奨**: 本ツールのカスタマイズ、バグ修正、機能追加等が必要な場合は、どなたでもご自由に本リポジトリをフォーク（Fork）し、ご自身の用途に合わせて改変・再配布・活用してください。
 
 ---
 
-## 📊 比較検証＆ベンチマーク結果
+## ライセンス (MIT License)
 
-`sample_qr.wasm` と `sample_wrapper.js` を使用し、2D マトリクス生成を 200 回連続実行して動作精度と速度を比較検証しました：
+本リポジトリは **MIT License** のもとで公開されています。
 
-| 検証項目 | オリジナル（未難読化） | 難読化後（安全保護済み） | 判定・差分 |
-| :--- | :--- | :--- | :--- |
-| **Wasm バイナリサイズ** | 12.70 KB | 12.70 KB | **完全一致（Wasm無改変・保護）** |
-| **JSコードサイズ** | 15.69 KB | 36.75 KB | **約 2.3 倍（制御フロー平坦化・暗号化）** |
-| **マトリクス規格・サイズ** | 29x29 | 29x29 | **100% 完全一致 ✅** |
-| **ファインダーパターン (`isDark`)** | `true` | `true` | **100% 完全一致 ✅** |
-| **200回連続処理時間** | 1.19 ms | 2.32 ms | **+1.13 ms（極めて軽微な差）** |
-| **スループット** | 167,715 ops/s | 86,044 ops/s | **実用上十分な超高速動作 ✅** |
+- 商用・非商用を問わず、誰でも無料で自由に使用、複製、改変、結合、掲載、配布、サブライセンス、および/または販売することができます。
+- 詳細は [LICENSE](LICENSE) ファイルをご参照ください。
 
 ---
 
-## 🚀 動作検証の実行手順
+## 普通の難読化ツール（Terser / UglifyJS / 単体 Obfuscator）との比較
+
+| 比較項目 | 普通の難読化ツール (Terser, UglifyJS, 一般のObfuscator) | 本ツール (`--export-symbols` 対応 Hike Safe Obfuscator) |
+| :--- | :--- | :--- |
+| **Wasm境界保護** | **不適切（クラッシュ発生）**<br>`instance.exports.hike_main` や `imports.env.malloc` 等の識別子まで難読化・変名されてしまい、実行時エラーが発生 | **100% 安全（境界完全保護）**<br>`--export-symbols` メタデータにより Wasm/JS 接続境界のシンボルを全自動予約・保護 |
+| **難読化強度** | Wasm 境界エラーを避けるために設定を弱くせざるを得ない | **最大強度を維持可能**<br>制御フロー平坦化・文字列暗号化・難読化を強力にかけることが可能 |
+| **設定の手間** | 手動で予約語リスト（`reserved`）を1つずつ調査・記述する必要がある | **ゼロコンフィグ / 完全自動**<br>Hike コンパイラの `--export-symbols` から自動抽出 |
+| **実行環境** | Node.js 依存の重いビルド環境が必要なケースが多い | **Bash スクリプト / スタンドアロンバイナリ対応**<br>Node不要の Bash や単一 `.exe` で1コマンド実行 |
+
+---
+
+## 謝辞 (Acknowledgements)
+
+本プロジェクトの作成にあたり、優れた難読化基盤および言語機能を提供してくださっている開発者の皆様に深く感謝と御礼を申し上げます。
+
+### 1. 内部難読化ツール (`javascript-obfuscator` & `Babel`) 作成者・開発者の皆様へ
+本パイプラインの難読化エンジンとして活用させていただいている JavaScript 高強度難読化ツール [javascript-obfuscator](https://github.com/javascript-obfuscator/javascript-obfuscator) の作者・開発者の皆様、ならびに JavaScript AST 解析ライブラリ [Babel](https://babeljs.io/) (`@babel/parser`, `@babel/traverse`) の開発者の皆様に心より感謝申し上げます。素晴らしい難読化・パース技術のおかげで、Wasm 境界を壊さない安全な難読化が実現できています。
+
+### 2. Hike 言語の作者・開発チームの皆様へ
+次世代のシステムプログラミング言語 [Hike (hike-lang)](https://github.com/hike-lang/hike-lang) を開発・提供してくださっている作者様および開発チームの皆様に深く御礼申し上げます。特に、Wasm コンパイル時にエクスポート/インポート・シンボル情報を出力する `--export-symbols` オプションをサポートしていただいたことで、難読化パイプラインとの完全かつ安全な連携が実現いたしました。
+
+---
+
+## Bash シェルスクリプト版 (`build-obfuscate.sh`)
+
+JavaScript ファイル（`node ...`）を直接実行するのではなく、Linux / macOS / Git Bash 等の端末から Bash スクリプト 1 本で実行したい場合、**`build-obfuscate.sh`** が使用できます。
 
 ```bash
-# 1. 依存パッケージのインストール
-npm install
-# （Deno を使用する場合）: deno install --node-modules-dir=auto
+# 権限の付与 (初回のみ)
+chmod +x build-obfuscate.sh
 
-# 2. 比較検証テストの実行
-npm test
-# または
-node test_comparison.js
+# Bash スクリプトから直接実行
+./build-obfuscate.sh --export-symbols sample_symbols.json
+```
+
+#### 引数オプション:
+- `--export-symbols <path>`: Hike コンパイラが出力したシンボル定義ファイルのパス。
+- `--runtime <path>`: 難読化対象の `runtime.js` パス。
+- `--out <path>`: 難読化後の出力先 (`runtime.min.js`) パス。
+- `--src <path>`: (オプション) `hikec` でコンパイルする Hike ソースファイル。
+- `--wasm-out <path>`: (オプション) `hikec` での Wasm 出力パス。
+
+---
+
+## その他の実行方法 (Node不要 / 単一バイナリ)
+
+### 1. 完全独立型 Pure JS 難読化スクリプト (`build-obfuscate-standalone.js`)
+外部 `node_modules` 依存なしで動作する全環境対応スクリプトです。
+
+```bash
+deno run -A build-obfuscate-standalone.js --export-symbols sample_symbols.json
+```
+
+### 2. Deno 単一バイナリ (Executable `.exe`)
+Node.js すらインストールされていない環境でも動作する単一の独立実行ファイル（`.exe`）を作成できます。
+
+```bash
+# 単一バイナリのビルド (同梱の build-exe.bat でも実行可能)
+deno compile --allow-read --allow-write --allow-run --output hike-obfuscate.exe build-obfuscate-standalone.js
+
+# 直接実行
+./hike-obfuscate.exe --export-symbols sample_symbols.json
 ```
 
 ---
 
-## 💡 `hikec` コンパイラへの組み込み提案
+## `--export-symbols` 対応の概要
 
-`hikec` コンパイラ自身は、プログラム内のすべてのエクスポート関数名、インポート関数名、グローバル変数を内部で完全に把握しています。
+Hike コンパイラ（`hikec`）がコンパイル時に生成する `--export-symbols` 情報（例: `symbols.json`）を本ツールが直接読み込み、予約語リスト（`reservedNames` / `reservedStrings`）へ自動登録します。
 
-そのため、将来的に `hikec` 自身に難読化フラグ（例: `hikec build --obfuscate`）が組み込まれると以下のような大きなメリットがあります：
-1. **設定不要（ゼロコンフィグ）**: ユーザー側で Babel や難読化設定、予約語リストを用意する必要がなくなります。
-2. **確実な安全性**: コンパイラが持つシンボル情報から、Wasm/JS の接続境界を 100% 確実に保護できます。
-3. **シームレスな開発体験**: `wasm-strip` による不要セクション削除と JS 難読化が 1 コマンドで完結します。
+これにより以下のハイブリッド保護を実現します：
+1. **コンパイラ主導の確実なシンボル保護**: Hike コンパイラから直接出力された公開関数・変数名・システムシンボルを 100% 予約保護。
+2. **AST 静的解析による JS 側インターフェース保護**: `runtime.js` 内のプロパティやグローバル識別子を自動抽出・保護。
 
+---
+
+## フォルダ構成
+
+```text
+hike-obfuscate-export-symbols/
+├── build-obfuscate.sh               # Bash シェルスクリプト版難読化パイプライン
+├── build-obfuscate-standalone.js    # Node.js / node_modules 依存なしの Pure JS 難読化スクリプト
+├── build-obfuscate.js               # --export-symbols 対応の標準ビルドスクリプト
+├── build-exe.bat                    # Deno を使って独立 .exe バイナリを作成するバッチスクリプト
+├── test_comparison.js               # --export-symbols 連携動作検証＆ベンチマークテスト
+├── sample_symbols.json              # hikec --export-symbols で出力されるシンボル定義のサンプル
+├── runtime.js                       # Hike 標準 WebAssembly ランタイム
+├── sample_qr.wasm                   # 検証用 Wasm モジュール
+├── sample_wrapper.js                # 検証用 JS ラッパー
+├── package.json                     # 依存パッケージ定義
+├── LICENSE                          # MIT License
+├── README.ja.md                     # 本ドキュメント (日本語)
+└── README.md                        # 英語ドキュメント
+```

@@ -1,5 +1,6 @@
 node_modules/
-.DS_Store
-Thumbs.db
 *.log
-
+*.tmp
+runtime.min.js
+sample_wrapper.min.js
+.deno/

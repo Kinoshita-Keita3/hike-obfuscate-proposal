@@ -1,67 +1,74 @@
-# [Proposal / PoC] Hike WebAssembly & Runtime Safe Obfuscation Pipeline
+# Hike WebAssembly & Runtime Safe Obfuscation Tool (`--export-symbols` Edition)
 
-[日本語版 (Japanese README)](./README.ja.md)
+A high-strength, WebAssembly-safe obfuscation build pipeline for [Hike Programming Language (hike-lang)](https://github.com/hike-lang/hike-lang) programs (`*.wasm`) and auto-generated JavaScript glue code (`runtime.js`).
 
-> **Note**: This repository is a temporary, standalone Proof-of-Concept (PoC) proposal for the Hike Language development team. (Unmaintained / Archive-ready).
-
----
-
-## 🎯 Purpose & Background
-
-When shipping production WebAssembly modules compiled by the **Hike Language** alongside their companion JavaScript runtime (`runtime.js`), applying JavaScript obfuscators naively breaks the WebAssembly export/import boundaries (e.g., renaming `instance.exports.xxx` or `imports.env.malloc`).
-
-This repository provides a reference implementation and benchmark demonstrating how **AST static analysis (Babel)** combined with `javascript-obfuscator` automatically extracts and protects Wasm interfaces, producing a fully functional, highly obfuscated runtime with **zero manual configuration and zero interface breakage**.
+Natively supports the newly added `--export-symbols` option from the Hike compiler.
 
 ---
 
-## 📁 Repository Structure
+## ⚠️ Maintenance Notice & Freedom to Fork
 
-```text
-├── package.json          # Dependencies (@babel/parser, @babel/traverse, javascript-obfuscator)
-├── .gitignore            # Clean git ignore for node_modules / logs
-├── build-obfuscate.js    # Automated build & AST interface extraction pipeline
-├── runtime.js            # Standard Hike WebAssembly runtime
-├── sample_qr.wasm        # Compiled sample Wasm module for verification
-├── sample_wrapper.js     # Companion JS glue code for sample_qr.wasm
-├── test_comparison.js    # Benchmark script comparing original vs obfuscated
-└── README.md             # This document
-```
+- **Unmaintained Status**: This repository is published as a proof-of-concept reference implementation. **The author does not possess deep compiler/obfuscation expertise and will not actively maintain, fix bugs, or provide updates to this project.**
+- **Encouragement to Fork**: Feel free to **fork this repository**, modify, customize, fix bugs, or adapt it to your own needs without restriction.
 
 ---
 
-## 📊 Verification & Benchmark Results
+## License (MIT License)
 
-Ran 200 iterations of 2D Matrix Generation on WebAssembly using `sample_qr.wasm` and `sample_wrapper.js`:
+This repository is licensed under the **MIT License**.
 
-| Metric | Original (Unmodified) | Obfuscated (Protected) | Result |
-| :--- | :--- | :--- | :--- |
-| **Wasm Binary Size** | 12.70 KB | 12.70 KB | **Unaltered (Safe)** |
-| **JS Wrapper Size** | 15.69 KB | 36.75 KB | **2.3x (Control flow flattened)** |
-| **Matrix Dimensions** | 29x29 | 29x29 | **100% Match ✅** |
-| **Finder Pattern (`isDark`)** | `true` | `true` | **100% Match ✅** |
-| **200 Iterations Time** | 1.19 ms | 2.32 ms | **+1.13 ms only** |
-| **Throughput** | 167,715 ops/s | 86,044 ops/s | **Ultra-fast production speed ✅** |
+- Free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software.
+- See the [LICENSE](LICENSE) file for complete details.
 
 ---
 
-## 🚀 How to Run the Verification
+## Comparison: Ordinary Obfuscator vs. Hike Safe Obfuscator
+
+| Metric / Feature | Ordinary Obfuscator (Terser, UglifyJS, Standard Obfuscator) | Hike Safe Obfuscator (`--export-symbols` Edition) |
+| :--- | :--- | :--- |
+| **Wasm Boundary Safety** | **Unsafe / Crashes**<br>Obfuscates Wasm export/import interfaces (`instance.exports.malloc`, etc.) causing runtime crashes | **100% Safe (Bulletproof)**<br>Ingests `--export-symbols` metadata to automatically protect all Wasm/JS boundary symbols |
+| **Obfuscation Strength** | Forced to reduce protection levels to prevent boundary breakage | **Maximum Strength**<br>Enables high-strength control flow flattening and string encoding with zero runtime errors |
+| **Configuration Effort** | Manual symbol discovery & tedious reservation list maintenance | **Zero-Config**<br>Automatically ingests symbols from Hike compiler's `--export-symbols` flag |
+| **CLI / Shell Pipeline** | Usually requires heavy Node.js build tools | **Bash Script & Standalone Binary Included**<br>Run directly via `./build-obfuscate.sh` or single executable |
+
+---
+
+## Acknowledgements
+
+We express our sincere gratitude and appreciation to:
+
+### 1. Authors & Maintainers of Underlying Obfuscation Tools (`javascript-obfuscator` & `Babel`)
+Heartfelt thanks to the author and maintainers of [javascript-obfuscator](https://github.com/javascript-obfuscator/javascript-obfuscator) and the [Babel](https://babeljs.io/) team (`@babel/parser`, `@babel/traverse`). Your excellent obfuscation engine and AST parsing foundation make robust Wasm boundary protection possible.
+
+### 2. The Author & Core Team of the Hike Programming Language
+Deepest thanks to the author and core team of the [Hike Programming Language (hike-lang)](https://github.com/hike-lang/hike-lang). We greatly appreciate your support and implementation of the `--export-symbols` option in `hikec`, enabling bulletproof Wasm obfuscation integration.
+
+---
+
+## Bash Shell Script Edition (`build-obfuscate.sh`)
+
+You can run the obfuscation pipeline directly via Bash without executing node files manually:
 
 ```bash
-# 1. Install dependencies
-npm install
-# (or if using Deno): deno install --node-modules-dir=auto
-
-# 2. Run the comparison test
-npm test
-# (or): node test_comparison.js
+chmod +x build-obfuscate.sh
+./build-obfuscate.sh --export-symbols sample_symbols.json
 ```
 
 ---
 
-## 💡 Proposal for `hikec` Compiler Integration
+## Standalone Support (Node-less & Single Executable)
 
-Since the `hikec` compiler has complete internal knowledge of all exported functions, global variables, and imported host bindings, integrating this obfuscation pass directly into `hikec` (e.g. `hikec build --obfuscate`) would allow:
-1. **Zero external configuration**: No need for users to configure Babel or reservation lists.
-2. **Guaranteed interface safety**: Automatic preservation of Wasm/JS boundaries.
-3. **Streamlined developer experience**: Single-command production build with `wasm-strip` and JS obfuscation.
+### 1. Pure JS Standalone Script (`build-obfuscate-standalone.js`)
+Zero external npm dependencies:
 
+```bash
+deno run -A build-obfuscate-standalone.js --export-symbols sample_symbols.json
+```
+
+### 2. Deno Standalone Binary (`.exe`)
+Compile into a single self-contained executable with Deno without requiring Node.js:
+
+```bash
+deno compile --allow-read --allow-write --allow-run --output hike-obfuscate.exe build-obfuscate-standalone.js
+./hike-obfuscate.exe --export-symbols sample_symbols.json
+```

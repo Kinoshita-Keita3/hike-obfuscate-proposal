@@ -1,9 +1,10 @@
 {
-  "name": "hike-obfuscate-proposal",
-  "version": "1.0.0",
-  "description": "[Proposal / PoC] Reference implementation for Hike WebAssembly & runtime safe obfuscation pipeline",
+  "name": "hike-obfuscate-export-symbols",
+  "version": "1.1.0",
+  "description": "Hike WebAssembly & Runtime Safe Obfuscation Pipeline with --export-symbols Support",
   "main": "build-obfuscate.js",
   "type": "commonjs",
+  "license": "MIT",
   "scripts": {
     "build": "node build-obfuscate.js",
     "test": "node test_comparison.js"
@@ -15,4 +16,3 @@
   },
   "devDependencies": {}
 }
-
